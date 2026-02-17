@@ -1,0 +1,91 @@
+name: MLOps Pipeline
+
+on:
+  push:
+    branches:
+      - main 
+
+jobs:
+
+  register_dataset:
+    name: Register the Dataset
+    runs-on: windows-10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Dependencies
+        run: pip install -r W2MLOps/requirements.txt
+      - name: Upload Dataset to Hugging Face Hub
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: python W2MLOps/model_building/data_register.py
+ 
+      - name: Start MLflow Server
+        run: |
+          start /B mlflow server ^
+          --backend-store-uri sqlite:///mlflow.db ^
+          --default-artifact-root ./mlruns ^
+          --host 127.0.0.1 ^
+          --port 5000
+
+      - name: Register Dataset
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          MLFLOW_TRACKING_URI: http://127.0.0.1:5000
+        run: python model_building/data_register.py
+
+
+  data_preparation:
+    name: Data Preparation
+    runs-on: windows-latest
+    needs: register_dataset
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v4
+
+      - name: Install Dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run Data Preparation
+        env:
+          MLFLOW_TRACKING_URI: http://127.0.0.1:5000
+        run: python model_building/prep.py
+
+
+  model_training:
+    name: Model Training
+    runs-on: windows-latest
+    needs: data_preparation
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v4
+
+      - name: Install Dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run Model Training
+        env:
+          MLFLOW_TRACKING_URI: http://127.0.0.1:5000
+        run: python model_building/train.py
+
+
+  deploy_hosting:
+    name: Deploy Hosting
+    runs-on: windows-latest
+    needs: [register_dataset, data_preparation, model_training]
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v4
+
+      - name: Install Dependencies
+        run: pip install -r requirements.txt
+
+      - name: Deploy to Hugging Face Space
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          MLFLOW_TRACKING_URI: http://127.0.0.1:5000
+        run: python hosting.py
